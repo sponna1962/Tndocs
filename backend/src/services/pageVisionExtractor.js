@@ -27,20 +27,24 @@ const config = require('../config');
 const GEMINI_API_URL_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
 
 const SYSTEM_PROMPT = `You are reading ONE PAGE (as an image/PDF) of a scanned TNPSC exam question paper.
-The paper is bilingual: every question and option is printed in English followed by its Tamil translation.
+The paper may be BILINGUAL (English + Tamil), ENGLISH-ONLY, or TAMIL-ONLY. Determine this from what is actually printed — do not assume.
+Some papers print a THIRD language (commonly Hindi, in Devanagari script) alongside English. IGNORE Hindi (or any language other than English/Tamil) completely — never place Hindi text into question_ta or any Tamil field, and never place it into an English field either. Only English and Tamil are ever wanted in the output; treat any other language on the page as if it were not there.
 The correct answer for each question is hand-marked on the page with a tick/checkmark or a hand-drawn circle around one of the option letters (A), (B), (C), (D), or occasionally (E) "Answer not known".
 
-Extract every question that is FULLY visible on this page (full question text, all of its options, in both languages).
+Extract every question that is FULLY visible on this page (full question text, all of its options, in whichever language(s) are actually printed).
 
 For each complete question return an object with:
 - question_number: the printed number (e.g. 39)
-- question_en: the full question in English. If the question includes a "match the following" or lettered/numbered pairs (e.g. (1)...(4) matched to definitions, or (a)...(d) matched to (1)...(4)), include that entire pairing INSIDE question_en as plain text, on separate lines, in English.
-- question_ta: the same, fully in Tamil, including any pairing lists, in Tamil.
-- option_a_en, option_a_ta, option_b_en, option_b_ta, option_c_en, option_c_ta, option_d_en, option_d_ta: the four printed answer choices (A)-(D), in English and Tamil respectively. Do not include the letter itself in the text.
+- question_en: the question in English, ONLY IF English text is printed on the page for this question. If this question is printed in Tamil only, leave question_en as an empty string "" — do NOT translate Tamil into English yourself.
+- question_ta: the question in Tamil, ONLY IF Tamil text is printed on the page for this question. If this question is printed in English only, leave question_ta as an empty string "" — do NOT translate English into Tamil yourself.
+  (If a question includes a "match the following" or lettered/numbered pairs, include that entire pairing inside question_en and/or question_ta as plain text on separate lines, in whichever language(s) are printed.)
+- option_a_en, option_a_ta, option_b_en, option_b_ta, option_c_en, option_c_ta, option_d_en, option_d_ta: the four printed answer choices (A)-(D). Same rule: fill only the language(s) actually printed for each option; leave the other as "" rather than translating. Do not include the letter itself in the text.
 - correct_answer: "A", "B", "C", or "D" — based on which option letter is visibly ticked/checked/circled by hand in the image. If the handwritten mark is on option (E) "Answer not known" or no mark is visible at all, use "REVIEW_REQUIRED".
 - incomplete: true if this question's text, options, or answer mark are cut off by the top or bottom edge of the page (i.e. it clearly continues onto the previous or next page). Otherwise false.
 
 Rules:
+- NEVER invent, guess, or translate text into a language that is not actually printed on the page for that question. Faithfully transcribe only what is printed — one language, or both, exactly as the source has it.
+- NEVER include Hindi or any third language anywhere in the output, even if it appears on the page. If a question is printed in English + Hindi (no Tamil), output only the English in question_en and leave question_ta as "".
 - Never invent or guess a question that is not printed on the page.
 - Never fabricate a correct_answer — only report a tick/circle you can actually see.
 - If a fragment of a question appears at the very top of the page with no question number (continuing from the previous page), IGNORE that fragment entirely — do not return it, and do not attach it to another question. It will be handled from the previous page's own extraction.
