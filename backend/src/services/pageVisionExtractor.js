@@ -89,8 +89,8 @@ function stripCodeFences(text) {
 }
 
 function getModelCandidates() {
-  const configured = String(config.gemini.model || 'gemini-3.5-flash-lite').trim().replace(/^models\//i, '');
-  const fallback = ['gemini-3.5-flash-lite', 'gemini-3.6-flash'];
+  const configured = String(config.gemini.model || 'gemini-3.6-flash').trim().replace(/^models\//i, '');
+  const fallback = ['gemini-3.6-flash', 'gemini-3.5-flash-lite'];
   return [...new Set([configured, ...fallback])];
 }
 
@@ -102,7 +102,7 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
  * Throws on total failure (all model candidates / retries exhausted) so the
  * caller can flag the page as failed rather than silently return nothing.
  */
-async function extractQuestionsFromPage(filePath, mimeType, pageNumber, { attempts = 1 } = {}) {
+async function extractQuestionsFromPage(filePath, mimeType, pageNumber, { attempts = 2 } = {}) {
   if (!config.gemini.apiKey) throw new Error('GEMINI_API_KEY is missing.');
   const bytes = fs.readFileSync(filePath);
   const base64 = bytes.toString('base64');
@@ -166,7 +166,7 @@ async function extractQuestionsFromPage(filePath, mimeType, pageNumber, { attemp
         lastError = error;
       }
     }
-    if (attempt < attempts) await sleep(1000 * attempt);
+    if (attempt < attempts) await sleep(4000 * attempt); // 503/429 are transient (Google-side overload/quota) — a few seconds' wait meaningfully improves the retry's chance of success
   }
   throw lastError || new Error(`Gemini vision extraction failed for page ${pageNumber}.`);
 }
