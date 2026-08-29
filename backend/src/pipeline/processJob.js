@@ -43,6 +43,7 @@ async function runVisionOcrStage(jobId) {
     const split = await splitPdfIntoPages(job.filePath);
     tempDir = split.tempDir;
     await jobStore.update(jobId, { totalPages: split.totalPages, pagesProcessed: 0 });
+    console.log(`[VISION] Job ${jobId}: starting ${split.totalPages} page(s), model=${config.gemini.model || 'gemini-2.5-flash'}, apiKeySet=${Boolean(config.gemini.apiKey)}, apiKeyTail=${config.gemini.apiKey ? config.gemini.apiKey.slice(-6) : 'none'}`);
 
     const concurrency = Math.max(1, Number(process.env.GEMINI_VISION_CONCURRENCY || config.gemini.concurrency || 2));
     const minIntervalMs = Math.max(0, Number(process.env.GEMINI_VISION_MIN_INTERVAL_MS || 0));
