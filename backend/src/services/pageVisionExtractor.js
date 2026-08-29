@@ -219,12 +219,15 @@ async function extractAllPages(pages, { concurrency = 2, onProgress, maxConsecut
         results[i] = result;
         consecutiveFailures = 0;
       } catch (err) {
-        failed.push({ pageNumber: page.pageNumber, error: String(err.message || err).slice(0, 500) });
+        const errMsg = String(err.message || err).slice(0, 500);
+        console.error(`[VISION] page ${page.pageNumber} failed: ${errMsg}`);
+        failed.push({ pageNumber: page.pageNumber, error: errMsg });
         results[i] = { pageNumber: page.pageNumber, questions: [], raw: '' };
         consecutiveFailures += 1;
         if (consecutiveFailures >= maxConsecutiveFailures && !aborted) {
           aborted = true;
           abortReason = `Stopped after ${consecutiveFailures} consecutive page failures — likely a server or API problem, not individual bad pages. Remaining pages were not sent to Gemini (no cost incurred for them). Check server health/logs and retry.`;
+          console.error(`[VISION] circuit breaker tripped: ${abortReason}`);
         }
       }
       if (onProgress) await onProgress({ done: results.filter(Boolean).length, total: pages.length, pageNumber: page.pageNumber });
