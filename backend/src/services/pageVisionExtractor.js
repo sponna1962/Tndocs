@@ -174,13 +174,26 @@ async function extractQuestionsFromPage(filePath, mimeType, pageNumber, { attemp
  * Returns { rows, failedPages } where rows are ready for validateQuestions()
  * after contiguous renumbering (see mapToCsvRows below).
  */
-async function extractAllPages(pages, { concurrency = 2, onProgress, maxConsecutiveFailures = 8 } = {}) {
+async function extractAllPages(pages, { concurrency = 2, onProgress, maxConsecutiveFailures = 8, minIntervalMs = 0 } = {}) {
   const results = new Array(pages.length);
   const failed = [];
   let cursor = 0;
   let consecutiveFailures = 0;
   let aborted = false;
   let abortReason = '';
+
+  // Rate-limit-safe pacing: on a free-tier API key (low requests-per-minute
+  // quota), even concurrency=1 can exceed the limit if requests are dispatched
+  // back-to-back. minIntervalMs enforces a minimum gap between the START of
+  // one request and the next across ALL workers, so total throughput stays
+  // under quota regardless of how fast Gemini responds.
+  let nextDispatchAt = 0;
+  async function waitForDispatchSlot() {
+    if (!minIntervalMs) return;
+    const wait = Math.max(0, nextDispatchAt - Date.now());
+    if (wait) await sleep(wait);
+    nextDispatchAt = Date.now() + minIntervalMs;
+  }
 
   async function worker() {
     while (true) {
@@ -196,6 +209,9 @@ async function extractAllPages(pages, { concurrency = 2, onProgress, maxConsecut
       // guaranteed failures, so stop dispatching new pages entirely and let
       // the caller surface a clear error instead of a half-finished, very
       // expensive job.
+      if (aborted) return;
+
+      await waitForDispatchSlot();
       if (aborted) return;
 
       try {
