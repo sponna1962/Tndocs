@@ -1,0 +1,30 @@
+{
+  "name": "tnpsc-pdf-to-csv-backend",
+  "version": "1.0.0",
+  "description": "Backend API for converting scanned TNPSC PDFs into structured CSV using an external OCR provider (Google Document AI / Azure Document Intelligence).",
+  "main": "src/server.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "nodemon src/server.js",
+    "test": "node test_pipeline.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "multer": "^1.4.5-lts.1",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "uuid": "^9.0.1",
+    "node-fetch": "^2.7.0",
+    "csv-stringify": "^6.5.0",
+    "form-data": "^4.0.0",
+    "google-auth-library": "^9.0.0",
+    "pdf-lib": "^1.17.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.4"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

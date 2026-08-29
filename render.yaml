@@ -1,0 +1,96 @@
+# Render.com Blueprint
+#
+# This deploys the WHOLE app as a single Node web service. server.js already
+# serves the API (/api/...) AND the static frontend (frontend/index.html)
+# from the same Express app/origin, so this is the simplest, most reliable
+# way to deploy: no CORS to configure, no separate frontend host, no
+# window.API_BASE to edit — leave it as '' (the default).
+#
+# To use: push this repo to GitHub, then in Render: New -> Blueprint ->
+# select this repo. Render reads this file automatically.
+#
+# If you'd rather deploy frontend and backend on two separate hosts instead
+# (e.g. Vercel for frontend + Render for backend), skip this file and follow
+# the "Deployment (frontend and backend on separate hosts)" section in
+# README.md instead — just don't do both at once.
+
+services:
+  - type: web
+    name: tnpsc-pdf-to-csv
+    runtime: node
+    plan: free
+    rootDir: backend
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 8080
+      - key: OCR_PROVIDER
+        value: google
+      # CORS: same-origin here (frontend is served by this same service),
+      # but keep this set to this service's own public URL for safety once
+      # you know it, e.g. https://tnpsc-pdf-to-csv.onrender.com
+      - key: ALLOWED_ORIGIN
+        value: "*"
+      - key: UPLOAD_DIR
+        value: ./src/data/uploads
+      - key: JOB_DB_FILE
+        value: ./src/data/jobs.json
+      - key: MAX_UPLOAD_MB
+        value: 1024
+      - key: FILE_RETENTION_HOURS
+        value: 24
+      # Free-tier stability: one OCR request at a time, but no unnecessary 2.5s delay.
+      - key: OCR_CONCURRENCY
+        value: 2
+      - key: OCR_MIN_INTERVAL_MS
+        value: 1250
+      - key: OCR_MAX_ATTEMPTS
+        value: 2
+      - key: OCR_RETRY_BASE_MS
+        value: 1000
+      # Automatically use Gemini only when OCR.space fails a page.
+      - key: OCR_GEMINI_FALLBACK
+        value: true
+      - key: GEMINI_OCR_MIN_INTERVAL_MS
+        value: 1200
+      - key: GEMINI_OCR_MAX_ATTEMPTS
+        value: 2
+      # --- Fill these in via the Render dashboard (Secret), not here ---
+      - key: OCR_SPACE_API_KEY
+        sync: false
+      - key: LLM_PROVIDER
+        value: gemini
+      - key: GEMINI_MODEL
+        value: gemini-2.5-flash
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: LLM_BATCH_SIZE
+        value: 8
+      - key: LLM_MIN_INTERVAL_MS
+        value: 300
+      - key: GOOGLE_PROJECT_ID
+        sync: false
+      - key: GOOGLE_LOCATION
+        value: us
+      - key: GOOGLE_PROCESSOR_ID
+        sync: false
+      - key: GOOGLE_SERVICE_ACCOUNT_JSON
+        sync: false
+      - key: AZURE_DOCINTEL_ENDPOINT
+        sync: false
+      - key: AZURE_DOCINTEL_KEY
+        sync: false
+      - key: AZURE_DOCINTEL_MODEL
+        value: prebuilt-read
+    disk:
+      # Persists uploaded source files + the JSON job store across deploys.
+      # Without this, both are wiped every time the service restarts/redeploys,
+      # since Render's filesystem is otherwise ephemeral.
+      name: tnpsc-data
+      mountPath: /opt/render/project/src/backend/src/data
+      sizeGB: 1

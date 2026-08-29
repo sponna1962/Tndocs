@@ -1,0 +1,25 @@
+# Netlify deploy config for this project.
+#
+# Why the site showed "Page not found" on tndocs.netlify.app:
+# This repo's actual website files live inside frontend/ (index.html,
+# app.js, styles.css, config.js) — NOT at the repo root. Without this file,
+# Netlify looks for index.html at the repo root, doesn't find one, and shows
+# its generic "Page not found" page even though the deploy itself "succeeded".
+#
+# This file fixes that by telling Netlify to publish the frontend/ folder.
+# No build command is needed — it's plain static HTML/CSS/JS, no bundler.
+
+[build]
+  base = "frontend"
+  publish = "."
+  command = ""
+
+# This app never changes the URL (no pushState, no extra .html pages — see
+# README.md "Why the old version said Page Not Found"), so a SPA-style
+# catch-all redirect isn't strictly required. It's included anyway as a
+# harmless safety net in case anything ever links to a path that isn't a
+# real file, so it still lands on the app instead of a dead 404 page.
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

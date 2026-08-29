@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>TNPSC PDF → CSV Converter</title>
+<meta name="description" content="Convert scanned TNPSC question papers into a structured, Excel-ready CSV." />
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+<!--
+  IMPORTANT: this is the ONLY HTML file in this app. There are no other
+  routes/URLs to navigate to - every "step" below is a <section> that
+  app.js shows/hides. Refreshing the page always re-loads this same file,
+  so there is nothing for a static host to 404 on. See README.md for the
+  full explanation of why this avoids the old "Page Not Found" bug.
+-->
+
+<div class="app-shell">
+
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true">அ</span>
+      <div>
+        <h1>TNPSC PDF → CSV</h1>
+        <p class="subtitle">Scanned question papers → a clean, Excel-ready CSV</p>
+      </div>
+    </div>
+  </header>
+
+  <nav class="stepper" id="stepper" aria-label="Progress">
+    <ol>
+      <li class="step" data-step="1">
+        <span class="seal" aria-hidden="true"><em>௧</em></span>
+        <span class="step-text"><b>1</b>Upload</span>
+      </li>
+      <li class="step" data-step="2">
+        <span class="seal" aria-hidden="true"><em>௨</em></span>
+        <span class="step-text"><b>2</b>OCR Review</span>
+      </li>
+      <li class="step" data-step="3">
+        <span class="seal" aria-hidden="true"><em>௩</em></span>
+        <span class="step-text"><b>3</b>Structuring</span>
+      </li>
+      <li class="step" data-step="4">
+        <span class="seal" aria-hidden="true"><em>௪</em></span>
+        <span class="step-text"><b>4</b>Preview &amp; Edit</span>
+      </li>
+      <li class="step" data-step="5">
+        <span class="seal" aria-hidden="true"><em>௫</em></span>
+        <span class="step-text"><b>5</b>Download</span>
+      </li>
+    </ol>
+  </nav>
+
+  <main class="wizard">
+
+    <!-- ============================= STEP 1 ============================= -->
+    <section class="step-panel active" id="panel-1" data-step="1">
+      <div class="panel-inner">
+        <h2>Upload question paper(s)</h2>
+        <p class="hint">PDF or image files. Choose several at once to batch-process multiple papers.</p>
+
+        <div class="dropzone" id="dropzone" tabindex="0" role="button" aria-describedby="file-help">
+          <input type="file" id="file-input" accept=".pdf,.png,.jpg,.jpeg,.tif,.tiff" multiple hidden />
+          <p class="dropzone-label">Drop files here, or <span class="link-text">browse</span></p>
+          <p class="dropzone-sub" id="file-help">PDF, PNG, JPG, TIFF</p>
+        </div>
+
+        <ul class="file-list" id="file-list" hidden></ul>
+
+        <p class="error-text" id="upload-error" role="alert"></p>
+
+        <button id="start-btn" class="primary-btn" disabled>Start Processing</button>
+      </div>
+    </section>
+
+    <!-- ============================= STEP 2 ============================= -->
+    <section class="step-panel" id="panel-2" data-step="2">
+      <div class="panel-inner wide">
+        <h2>Review the extracted text</h2>
+        <p class="hint">Check the raw OCR output below and fix any obvious mistakes before question detection runs. Tamil and English are both editable.</p>
+
+        <div class="job-tabs" id="review-tabs" hidden></div>
+
+        <div id="review-body"></div>
+      </div>
+    </section>
+
+    <!-- ============================= STEP 3 ============================= -->
+    <section class="step-panel" id="panel-3" data-step="3">
+      <div class="panel-inner">
+        <h2>Structuring &amp; validation</h2>
+        <p class="hint">Detecting questions and options, then checking each one for missing fields, duplicates, or low OCR confidence.</p>
+
+        <div id="structuring-body"></div>
+      </div>
+    </section>
+
+    <!-- ============================= STEP 4 ============================= -->
+    <section class="step-panel" id="panel-4" data-step="4">
+      <div class="panel-inner wide">
+        <h2>Preview &amp; edit</h2>
+        <p class="hint">Rows needing review are highlighted. Every cell is editable.</p>
+
+        <div class="job-tabs" id="preview-tabs" hidden></div>
+        <div class="validation-summary" id="preview-summary"></div>
+
+        <div class="table-wrap">
+          <table id="preview-table">
+            <thead>
+              <tr>
+                <th class="col-no">No.</th>
+                <th class="col-q">Question (English)</th><th class="col-q">Question (Tamil)</th>
+                <th>Option A (English)</th><th>Option A (Tamil)</th>
+                <th>Option B (English)</th><th>Option B (Tamil)</th>
+                <th>Option C (English)</th><th>Option C (Tamil)</th>
+                <th>Option D (English)</th><th>Option D (Tamil)</th>
+                <th>Correct Answer</th>
+              </tr>
+            </thead>
+            <tbody id="preview-body"></tbody>
+          </table>
+        </div>
+
+        <button id="save-edits-btn" class="secondary-btn">Save Edits &amp; Re-validate</button>
+        <p class="save-status" id="save-status" role="status"></p>
+      </div>
+    </section>
+
+    <!-- ============================= STEP 5 ============================= -->
+    <section class="step-panel" id="panel-5" data-step="5">
+      <div class="panel-inner">
+        <h2>Download</h2>
+        <p class="hint">Your structured CSV is ready — UTF-8 with a BOM, so Tamil text opens correctly in Excel and Google Sheets.</p>
+
+        <div id="download-body"></div>
+
+        <button id="combine-btn" class="secondary-btn" hidden>Download Combined CSV (all files)</button>
+        <button id="restart-btn" class="ghost-btn">Start another conversion</button>
+      </div>
+    </section>
+
+  </main>
+
+  <footer class="wizard-nav" id="wizard-nav" hidden>
+    <button id="back-btn" class="secondary-btn">Back</button>
+    <span class="footer-hint" id="footer-hint"></span>
+    <button id="next-btn" class="primary-btn" disabled>Next</button>
+  </footer>
+
+</div>
+
+<script src="config.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
