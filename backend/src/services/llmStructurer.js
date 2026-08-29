@@ -124,7 +124,7 @@ function languageProblem(fields) {
   return problems;
 }
 
-function localFields(row) {
+function localFields(row) {(row) {
   const fields = {};
 
   const sources = [
