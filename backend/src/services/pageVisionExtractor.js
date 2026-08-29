@@ -90,7 +90,7 @@ function stripCodeFences(text) {
 
 function getModelCandidates() {
   const configured = String(config.gemini.model || 'gemini-3.5-flash-lite').trim().replace(/^models\//i, '');
-  const fallback = ['gemini-3.5-flash-lite', 'gemini-3.6-flash'];
+  const fallback = ['gemini-3.5-flash-lite', 'gemini-3.6-flash', 'gemini-2.5-flash'];
   return [...new Set([configured, ...fallback])];
 }
 
@@ -149,7 +149,7 @@ async function extractQuestionsFromPage(filePath, mimeType, pageNumber, { attemp
           lastError = new Error(`Gemini vision extraction failed with model ${model} (HTTP ${response.status}): ${errText}`);
           console.error(`[VISION] page ${pageNumber} attempt with model=${model} -> HTTP ${response.status}: ${errText.slice(0, 250)}`);
           if (response.status === 404) continue; // try next model candidate
-          if (response.status === 429 || response.status >= 500) break; // retry whole attempt
+          if (response.status === 429 || response.status >= 500) continue; // try next model immediately — a different model is often not overloaded/quota-limited
           throw lastError;
         }
 
