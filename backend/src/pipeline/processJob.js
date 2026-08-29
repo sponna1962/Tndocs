@@ -45,8 +45,10 @@ async function runVisionOcrStage(jobId) {
     await jobStore.update(jobId, { totalPages: split.totalPages, pagesProcessed: 0 });
 
     const concurrency = Math.max(1, Number(process.env.GEMINI_VISION_CONCURRENCY || config.gemini.concurrency || 2));
+    const minIntervalMs = Math.max(0, Number(process.env.GEMINI_VISION_MIN_INTERVAL_MS || 0));
     const { results, failedPages, aborted, abortReason } = await extractAllPages(split.pages, {
       concurrency,
+      minIntervalMs,
       onProgress: async ({ done, pageNumber }) => {
         await jobStore.update(jobId, { pagesProcessed: done, processedPages: done, currentPage: pageNumber });
       },
