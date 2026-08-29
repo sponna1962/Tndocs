@@ -1,18 +1,26 @@
 const CONFIDENCE_REVIEW_THRESHOLD = 0.75;
 
-const TEXT_FIELDS = [
-  'question_en','question_ta',
-  'option_a_en','option_a_ta','option_b_en','option_b_ta',
-  'option_c_en','option_c_ta','option_d_en','option_d_ta',
+// Each pair is checked together: a question paper may be bilingual, English-only,
+// or Tamil-only. It is only an error if BOTH sides of a pair are empty — one side
+// filled and the other blank is the expected, correct shape for a monolingual paper.
+const TEXT_FIELD_PAIRS = [
+  ['question_en', 'question_ta'],
+  ['option_a_en', 'option_a_ta'],
+  ['option_b_en', 'option_b_ta'],
+  ['option_c_en', 'option_c_ta'],
+  ['option_d_en', 'option_d_ta'],
 ];
+const TEXT_FIELDS = TEXT_FIELD_PAIRS.flat();
 
 function validateQuestions(rows, { confidenceByNumber = {} } = {}) {
   const seenNumbers = new Map();
   const checked = rows.map((row) => {
     const issues = Array.isArray(row._preIssues) ? [...row._preIssues] : [];
     if (row.question_number === null || row.question_number === undefined) issues.push('Missing question number');
-    for (const field of TEXT_FIELDS) {
-      if (!String(row[field] || '').trim()) issues.push(`Missing ${field}`);
+    for (const [enField, taField] of TEXT_FIELD_PAIRS) {
+      const hasEn = String(row[enField] || '').trim();
+      const hasTa = String(row[taField] || '').trim();
+      if (!hasEn && !hasTa) issues.push(`Missing ${enField}/${taField} (both languages empty)`);
     }
     if (row.correct_answer && !['A','B','C','D'].includes(row.correct_answer)) issues.push('correct_answer must be A/B/C/D when present');
     if (row.question_number !== null && row.question_number !== undefined) {
