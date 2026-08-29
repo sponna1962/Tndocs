@@ -89,8 +89,8 @@ function stripCodeFences(text) {
 }
 
 function getModelCandidates() {
-  const configured = String(config.gemini.model || 'gemini-2.5-flash').trim().replace(/^models\//i, '');
-  const fallback = ['gemini-2.5-flash-lite', 'gemini-3.5-flash'];
+  const configured = String(config.gemini.model || 'gemini-2.0-flash').trim().replace(/^models\//i, '');
+  const fallback = ['gemini-2.0-flash', 'gemini-2.0-flash-lite'];
   return [...new Set([configured, ...fallback])];
 }
 
@@ -147,10 +147,13 @@ async function extractQuestionsFromPage(filePath, mimeType, pageNumber, { attemp
         if (!response.ok) {
           const errText = (await response.text()).slice(0, 700);
           lastError = new Error(`Gemini vision extraction failed with model ${model} (HTTP ${response.status}): ${errText}`);
+          console.error(`[VISION] page ${pageNumber} attempt with model=${model} -> HTTP ${response.status}: ${errText.slice(0, 250)}`);
           if (response.status === 404) continue; // try next model candidate
           if (response.status === 429 || response.status >= 500) break; // retry whole attempt
           throw lastError;
         }
+
+        console.log(`[VISION] page ${pageNumber} succeeded with model=${model}`);
 
         const data = await response.json();
         const text = data.candidates?.[0]?.content?.parts?.map((p) => p.text || '').join('').trim();
