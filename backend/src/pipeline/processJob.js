@@ -45,7 +45,7 @@ async function runVisionOcrStage(jobId) {
     await jobStore.update(jobId, { totalPages: split.totalPages, pagesProcessed: 0 });
 
     const concurrency = Math.max(1, Number(process.env.GEMINI_VISION_CONCURRENCY || config.gemini.concurrency || 2));
-    const { results, failedPages } = await extractAllPages(split.pages, {
+    const { results, failedPages, aborted, abortReason } = await extractAllPages(split.pages, {
       concurrency,
       onProgress: async ({ done, pageNumber }) => {
         await jobStore.update(jobId, { pagesProcessed: done, processedPages: done, currentPage: pageNumber });
@@ -63,6 +63,7 @@ async function runVisionOcrStage(jobId) {
       successfulPages: results.length - failedPages.length,
       failedPages,
       processingComplete: failedPages.length === 0,
+      ...(aborted ? { circuitBreakerTripped: true, error: abortReason } : {}),
     });
   } catch (err) {
     console.error(`[VISION] Job ${jobId} fatal failure:`, err);
