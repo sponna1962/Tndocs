@@ -2,9 +2,75 @@ const jobStore = require('../services/jobStore');
 const { getOCRProvider } = require('../providers/providerFactory');
 const { parseQuestions } = require('../services/questionParser');
 const { structureQuestionsBatch, recoverOcrFromPdf } = require('../services/llmStructurer');
+const { extractAllPages, mapToCsvRows } = require('../services/pageVisionExtractor');
 const { validateQuestions } = require('../services/validator');
 const { splitPdfIntoPages, cleanupSplitPdf } = require('../services/pdfPages');
 const config = require('../config');
+
+// Vision mode reads each page IMAGE directly with Gemini and returns
+// finished structured questions in one call per page, instead of running
+// OCR text-extraction and then a regex parser over that text. This avoids
+// the failure mode where OCR returns a truncated page and the regex parser
+// silently manufactures a garbage "question" from the leftover fragment.
+// It requires GEMINI_API_KEY. Falls back to the legacy OCR+regex pipeline
+// if no Gemini key is configured, or if explicitly disabled.
+function visionModeEnabled() {
+  if (String(process.env.EXTRACTION_MODE || '').toLowerCase() === 'ocr') return false;
+  return Boolean(config.gemini.apiKey);
+}
+
+function renderPageReview(pageResult) {
+  const lines = [];
+  for (const q of pageResult.questions || []) {
+    lines.push(`${q.question_number}. ${q.question_en}`);
+    lines.push(q.question_ta);
+    lines.push(`(A) ${q.option_a_en} / ${q.option_a_ta}`);
+    lines.push(`(B) ${q.option_b_en} / ${q.option_b_ta}`);
+    lines.push(`(C) ${q.option_c_en} / ${q.option_c_ta}`);
+    lines.push(`(D) ${q.option_d_en} / ${q.option_d_ta}`);
+    lines.push(`Detected answer: ${q.correct_answer}${q.incomplete ? '  [INCOMPLETE — verify against original page]' : ''}`);
+    lines.push('');
+  }
+  if (!lines.length) lines.push('(No complete question detected on this page.)');
+  return lines.join('\n');
+}
+
+async function runVisionOcrStage(jobId) {
+  let tempDir;
+  try {
+    await jobStore.update(jobId, { status: STAGES.OCR_PROCESSING, processedPages: 0, successfulPages: 0, failedPages: [], currentPage: 0 });
+    const job = await jobStore.get(jobId);
+    const split = await splitPdfIntoPages(job.filePath);
+    tempDir = split.tempDir;
+    await jobStore.update(jobId, { totalPages: split.totalPages, pagesProcessed: 0 });
+
+    const concurrency = Math.max(1, Number(process.env.GEMINI_VISION_CONCURRENCY || config.gemini.concurrency || 2));
+    const { results, failedPages } = await extractAllPages(split.pages, {
+      concurrency,
+      onProgress: async ({ done, pageNumber }) => {
+        await jobStore.update(jobId, { pagesProcessed: done, processedPages: done, currentPage: pageNumber });
+      },
+    });
+
+    const ocrPages = results.map((r) => ({ pageNumber: r.pageNumber, text: renderPageReview(r), blocks: [] }));
+    await jobStore.update(jobId, {
+      status: STAGES.AWAITING_TEXT_REVIEW,
+      ocrProvider: 'gemini-vision',
+      ocrAverageConfidence: null,
+      ocrPages,
+      _visionPages: results,
+      visionMode: true,
+      successfulPages: results.length - failedPages.length,
+      failedPages,
+      processingComplete: failedPages.length === 0,
+    });
+  } catch (err) {
+    console.error(`[VISION] Job ${jobId} fatal failure:`, err);
+    await jobStore.update(jobId, { status: STAGES.FAILED, error: err.message || 'Vision extraction failed.' });
+  } finally {
+    await cleanupSplitPdf(tempDir).catch(() => {});
+  }
+}
 
 const STAGES = { UPLOADING:'uploading', QUEUED:'queued', OCR_PROCESSING:'processing_ocr', AWAITING_TEXT_REVIEW:'awaiting_text_review', EXTRACTING_QUESTIONS:'extracting_questions', STRUCTURING_CSV:'structuring_csv', VALIDATING:'validating', COMPLETED:'completed', FAILED:'failed' };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -72,6 +138,7 @@ async function ocrOne(provider, page) {
   throw last || new Error('OCR failed');
 }
 async function runOcrStage(jobId) {
+  if (visionModeEnabled()) return runVisionOcrStage(jobId);
   let tempDir;
   try {
     await jobStore.update(jobId, { status: STAGES.OCR_PROCESSING, processedPages:0, successfulPages:0, failedPages:[], currentPage:0 });
@@ -133,50 +200,62 @@ async function runStructuringStage(jobId, editedPages) {
     if (!job) throw new Error(`Job ${jobId} not found.`);
     if (job.status !== STAGES.AWAITING_TEXT_REVIEW) throw new Error(`Job is not awaiting text review (current status: ${job.status}).`);
 
-    const pages = (Array.isArray(editedPages) && editedPages.length ? editedPages : job.ocrPages || [])
-      .filter((p) => String(p?.text || '').trim())
-      .sort((a, b) => (Number(a.pageNumber) || 0) - (Number(b.pageNumber) || 0));
+    let structuredRows;
 
-    await jobStore.update(jobId, { status: STAGES.EXTRACTING_QUESTIONS, ocrPages: pages });
-    const parsedRows = parseQuestions(pages);
+    if (job.visionMode && Array.isArray(job._visionPages) && job._visionPages.length) {
+      // Vision mode: pages were already fully structured (question + options
+      // + tick-marked answer) in one Gemini call per page during the OCR
+      // stage. There is no separate text-parsing/LLM-structuring pass here —
+      // we just flatten and renumber. This is what keeps vision mode from
+      // reintroducing the old regex-parser failure mode.
+      await jobStore.update(jobId, { status: STAGES.STRUCTURING_CSV });
+      structuredRows = mapToCsvRows(job._visionPages);
+      await jobStore.update(jobId, { questionsDetected: structuredRows.length });
+    } else {
+      const pages = (Array.isArray(editedPages) && editedPages.length ? editedPages : job.ocrPages || [])
+        .filter((p) => String(p?.text || '').trim())
+        .sort((a, b) => (Number(a.pageNumber) || 0) - (Number(b.pageNumber) || 0));
 
-    // Give Gemini the original page text as repair context. OCR frequently
-    // breaks a bilingual question across lines/columns, and some questions
-    // continue onto the next PDF page. The parser extracts a candidate block,
-    // while Gemini gets the surrounding page evidence needed to reconstruct it.
-    const pageContext = new Map(
-      pages.map((p) => [Number(p.pageNumber), String(p.text || '')])
-    );
-    parsedRows.forEach((row) => {
-      const pageText = pageContext.get(Number(row.source_page)) || '';
-      row._source_page_context = pageText.slice(0, 12000);
-    });
+      await jobStore.update(jobId, { status: STAGES.EXTRACTING_QUESTIONS, ocrPages: pages });
+      const parsedRows = parseQuestions(pages);
 
-    await jobStore.update(jobId, { status: STAGES.STRUCTURING_CSV, questionsDetected: parsedRows.length });
+      // Give Gemini the original page text as repair context. OCR frequently
+      // breaks a bilingual question across lines/columns, and some questions
+      // continue onto the next PDF page. The parser extracts a candidate block,
+      // while Gemini gets the surrounding page evidence needed to reconstruct it.
+      const pageContext = new Map(
+        pages.map((p) => [Number(p.pageNumber), String(p.text || '')])
+      );
+      parsedRows.forEach((row) => {
+        const pageText = pageContext.get(Number(row.source_page)) || '';
+        row._source_page_context = pageText.slice(0, 12000);
+      });
 
-    const structured = await structureQuestionsBatch(parsedRows);
-    const structuredRows = structured.map((result, i) => {
-      const sourceIndex = Number.isInteger(result.sourceRowIndex) ? result.sourceRowIndex : i;
-      const row = parsedRows[sourceIndex] || parsedRows[i];
-      const fields = result.fields || {};
-      return {
-        question_number: row.question_number,
-        source_question_number: row.source_question_number ?? row.question_number,
-        source_page: row.source_page,
-        question_ta: fields.question_ta || '',
-        question_en: fields.question_en || '',
-        option_a_ta: fields.option_a_ta || '', option_a_en: fields.option_a_en || '',
-        option_b_ta: fields.option_b_ta || '', option_b_en: fields.option_b_en || '',
-        option_c_ta: fields.option_c_ta || '', option_c_en: fields.option_c_en || '',
-        option_d_ta: fields.option_d_ta || '', option_d_en: fields.option_d_en || '',
-        correct_answer: ['A','B','C','D'].includes(fields.correct_answer) ? fields.correct_answer : '',
-        _preReview: Boolean(result.review),
-        _preIssues: Array.isArray(result.issues) ? result.issues : [],
-      };
-    });
+      await jobStore.update(jobId, { status: STAGES.STRUCTURING_CSV, questionsDetected: parsedRows.length });
 
-    // The AI result order is now authoritative for the logical exam sequence.
-    // Export numbering is always contiguous and is assigned only after AI
+      const structured = await structureQuestionsBatch(parsedRows);
+      structuredRows = structured.map((result, i) => {
+        const sourceIndex = Number.isInteger(result.sourceRowIndex) ? result.sourceRowIndex : i;
+        const row = parsedRows[sourceIndex] || parsedRows[i];
+        const fields = result.fields || {};
+        return {
+          question_number: row.question_number,
+          source_question_number: row.source_question_number ?? row.question_number,
+          source_page: row.source_page,
+          question_ta: fields.question_ta || '',
+          question_en: fields.question_en || '',
+          option_a_ta: fields.option_a_ta || '', option_a_en: fields.option_a_en || '',
+          option_b_ta: fields.option_b_ta || '', option_b_en: fields.option_b_en || '',
+          option_c_ta: fields.option_c_ta || '', option_c_en: fields.option_c_en || '',
+          option_d_ta: fields.option_d_ta || '', option_d_en: fields.option_d_en || '',
+          correct_answer: ['A','B','C','D'].includes(fields.correct_answer) ? fields.correct_answer : '',
+          _preReview: Boolean(result.review),
+          _preIssues: Array.isArray(result.issues) ? result.issues : [],
+        };
+      });
+    }
+
+    // Export numbering is always contiguous, assigned only after
     // reconstruction, so deleting a question later can safely renumber.
     structuredRows.forEach((row, index) => { row.question_number = index + 1; });
 
