@@ -382,6 +382,7 @@ For large PDFs on the free OCR.space API, use conservative settings to avoid bur
 
 ```env
 OCR_MAX_ATTEMPTS=3
+
 OCR_CONCURRENCY=1
 OCR_MIN_INTERVAL_MS=2500
 OCR_RETRY_BASE_MS=2000
