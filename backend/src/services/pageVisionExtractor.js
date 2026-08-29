@@ -102,7 +102,7 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
  * Throws on total failure (all model candidates / retries exhausted) so the
  * caller can flag the page as failed rather than silently return nothing.
  */
-async function extractQuestionsFromPage(filePath, mimeType, pageNumber, { attempts = 2 } = {}) {
+async function extractQuestionsFromPage(filePath, mimeType, pageNumber, { attempts = 1 } = {}) {
   if (!config.gemini.apiKey) throw new Error('GEMINI_API_KEY is missing.');
   const bytes = fs.readFileSync(filePath);
   const base64 = bytes.toString('base64');
@@ -174,29 +174,58 @@ async function extractQuestionsFromPage(filePath, mimeType, pageNumber, { attemp
  * Returns { rows, failedPages } where rows are ready for validateQuestions()
  * after contiguous renumbering (see mapToCsvRows below).
  */
-async function extractAllPages(pages, { concurrency = 2, onProgress } = {}) {
+async function extractAllPages(pages, { concurrency = 2, onProgress, maxConsecutiveFailures = 8 } = {}) {
   const results = new Array(pages.length);
   const failed = [];
   let cursor = 0;
+  let consecutiveFailures = 0;
+  let aborted = false;
+  let abortReason = '';
 
   async function worker() {
     while (true) {
+      if (aborted) return;
       const i = cursor++;
       if (i >= pages.length) return;
       const page = pages[i];
+
+      // Circuit breaker: if the last N pages in a row have all failed, this is
+      // almost certainly a systemic problem (server memory pressure, an
+      // outage, a bad API key) rather than bad luck on individual pages.
+      // Retrying page-by-page in that state just burns Gemini API cost for
+      // guaranteed failures, so stop dispatching new pages entirely and let
+      // the caller surface a clear error instead of a half-finished, very
+      // expensive job.
+      if (aborted) return;
+
       try {
         const result = await extractQuestionsFromPage(page.filePath, page.mimeType, page.pageNumber);
         results[i] = result;
+        consecutiveFailures = 0;
       } catch (err) {
         failed.push({ pageNumber: page.pageNumber, error: String(err.message || err).slice(0, 500) });
         results[i] = { pageNumber: page.pageNumber, questions: [], raw: '' };
+        consecutiveFailures += 1;
+        if (consecutiveFailures >= maxConsecutiveFailures && !aborted) {
+          aborted = true;
+          abortReason = `Stopped after ${consecutiveFailures} consecutive page failures — likely a server or API problem, not individual bad pages. Remaining pages were not sent to Gemini (no cost incurred for them). Check server health/logs and retry.`;
+        }
       }
       if (onProgress) await onProgress({ done: results.filter(Boolean).length, total: pages.length, pageNumber: page.pageNumber });
     }
   }
 
   await Promise.all(Array.from({ length: Math.min(concurrency, pages.length) }, worker));
-  return { results, failedPages: failed };
+
+  // Fill in any pages a worker never reached because of the circuit breaker.
+  for (let i = 0; i < pages.length; i += 1) {
+    if (!results[i]) {
+      results[i] = { pageNumber: pages[i].pageNumber, questions: [], raw: '' };
+      failed.push({ pageNumber: pages[i].pageNumber, error: 'Skipped: stopped after repeated consecutive failures elsewhere in this job.' });
+    }
+  }
+
+  return { results, failedPages: failed, aborted, abortReason };
 }
 
 /**
