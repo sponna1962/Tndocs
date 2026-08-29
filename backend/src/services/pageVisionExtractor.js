@@ -89,8 +89,8 @@ function stripCodeFences(text) {
 }
 
 function getModelCandidates() {
-  const configured = String(config.gemini.model || 'gemini-2.0-flash').trim().replace(/^models\//i, '');
-  const fallback = ['gemini-2.0-flash', 'gemini-2.0-flash-lite'];
+  const configured = String(config.gemini.model || 'gemini-3.5-flash-lite').trim().replace(/^models\//i, '');
+  const fallback = ['gemini-3.5-flash-lite', 'gemini-3.6-flash'];
   return [...new Set([configured, ...fallback])];
 }
 
