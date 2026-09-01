@@ -156,6 +156,31 @@ async function extractQuestionsFromPage(filePath, mimeType, pageNumber, { attemp
         console.log(`[VISION] page ${pageNumber} succeeded with model=${model}`);
 
         const data = await response.json();
+
+        // --- Non-invasive usage/cost logging only. Reads fields Gemini already
+        // returns in the response; does not alter the request, the parsed
+        // result, the return value, retries, concurrency, or timing. ---
+        const usage = data.usageMetadata;
+        if (usage) {
+          const inTok = usage.promptTokenCount ?? 0;
+          const outTok = usage.candidatesTokenCount ?? 0;
+          const totalTok = usage.totalTokenCount ?? (inTok + outTok);
+          // Approximate USD/1M-token list rates as of this writing — for cost
+          // *visibility* only, not billing. Verify against the Cloud Billing
+          // console for exact figures; update this table if Google's pricing
+          // changes.
+          const RATES_PER_M = {
+            'gemini-3.5-flash-lite': { in: 0.30, out: 2.50 },
+            'gemini-3.6-flash': { in: 0.75, out: 3.75 },
+            'gemini-2.5-flash': { in: 0.30, out: 2.50 },
+          };
+          const rate = RATES_PER_M[model];
+          const estUSD = rate ? ((inTok / 1e6) * rate.in) + ((outTok / 1e6) * rate.out) : null;
+          console.log(`[VISION][usage] page ${pageNumber} model=${model} inputTokens=${inTok} outputTokens=${outTok} totalTokens=${totalTok} estCostUSD=${estUSD !== null ? estUSD.toFixed(6) : 'unknown-rate'}`);
+        } else {
+          console.log(`[VISION][usage] page ${pageNumber} model=${model} usageMetadata not present in response`);
+        }
+
         const text = data.candidates?.[0]?.content?.parts?.map((p) => p.text || '').join('').trim();
         if (!text) { lastError = new Error(`Gemini vision extraction returned empty output for page ${pageNumber}.`); continue; }
 
